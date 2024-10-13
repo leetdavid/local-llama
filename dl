@@ -1,75 +1,124 @@
 #!/bin/bash
 
-# Given a link to a GGUF model,
-# 1. download it to the gguf/ directory,
-# 2. create a .Modelfile file,
-# 3. and add the model to ollama
+# Given the <ORGANIZATION>/<REPOSITORY> of a Huggingface GGUF Repo,
+# this script will download the model and add it to ollama.
+# it should take an option called --quant/-q to specify the quantization type.
+# the quant type is Q4_K_M by default.
 
+# For example,
+# ./dl2 bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF
+
+# should download the below link:
+# https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/resolve/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_M.gguf
 set -e
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <model-link>"
-  exit 1
+# if [ $# -ne 1 ]; then
+#   echo "Usage: $0 <model-repo> [--quant/-q <quant-type>]"
+#   exit 1
+# fi
+
+package="dl-gguf"
+MODELS_FOLDER=".gguf"
+
+quant_type="Q4_K_M"
+verbose='false'
+
+while test $# -gt 0; do
+  case "$1" in
+  -h | --help)
+    echo "$package - Download GGUF Models and Upload to Ollama"
+    echo " "
+    echo "$0 [options] application [arguments]"
+    echo " "
+    echo "options:"
+    echo "-h, --help                  Show this help message and exit"
+    echo "-q, --quant <quant-type>    Quantization type (default: Q4_K_M)"
+    echo "-v, --verbose               Enable verbose output"
+    exit 0
+    ;;
+  -q)
+    shift
+    if test $# -gt 0; then
+      quant_type="$1"
+      shift
+    else
+      quant_type="Q4_K_M"
+    fi
+
+    ;;
+  --quant*)
+    quant_type="echo $1 | sed -e 's/^[^=]*=//g"
+    shift
+    ;;
+  -v | --verbose)
+    verbose='true'
+    shift
+    ;;
+  *)
+    repo_path="$1"
+    shift
+    ;;
+  esac
+done
+
+# repo="$1"
+org=$(echo "$repo_path" | cut -d'/' -f1)
+repo=$(echo "$repo_path" | cut -d'/' -f2)
+
+model_name_gguf_removed=$(echo "$repo" | sed 's/-GGUF$//')
+
+# https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/resolve/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_M.gguf
+model_url="https://huggingface.co/$repo_path/resolve/main/$model_name_gguf_removed-$quant_type.gguf"
+
+# bartowski/Pantheon-RP-1.6.2-22b-Small-Q4_K_M.gguf
+model_dl_filepath="$MODELS_FOLDER/$org/$model_name_gguf_removed-$quant_type.gguf"
+
+# Pantheon-RP-1.6.2-22b-Small-Q4_K_M.gguf
+modelfile_name="$model_name_gguf_removed-$quant_type.Modelfile"
+
+function vlog() {
+  if [[ "$verbose" = 'true' ]]; then
+    echo "$@"
+  fi
+}
+
+if [ "$verbose" = 'true' ]; then
+  echo "model_url"
+  echo "- $model_url"
+  echo " "
+  echo "model_dl_filepath"
+  echo "- $model_dl_filepath"
+  echo " "
+  echo "modelfile_name - $modelfile_name"
+  echo " "
+  echo "quant_type - $quant_type"
+  echo " "
 fi
 
-model_link="$1"
-
-mkdir -p gguf
-
-# expected format:
-# model_link: https://huggingface.co/<ORGANIZATION>/<REPOSITORY>/resolve/main/<FILE_NAME>.gguf
-# file_name: <FILE_NAME>.gguf
-# modelfile_name: <FILE_NAME>.Modelfile
-# repo_name: <ORGANIZATION>/<REPOSITORY>
-
-# example expected values:
-# model_link: https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/resolve/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_L.gguf
-# file_name: Pantheon-RP-1.6.2-22b-Small-Q4_K_L.gguf
-# modelfile_name: Pantheon-RP-1.6.2-22b-Small-Q4_K_L.Modelfile
-# repo_name: bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF
-
-# ! Warning: the link may be a pointer link instead:
-# Pointer Link:
-# https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/blob/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_L.gguf
-# Actual Model Link:
-# https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/resolve/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_L.gguf
-# ! if the link is a pointer link, get the actual link by replacing /blob/main/ with /resolve/main/
-model_link=$(echo "$model_link" | sed 's#/blob/main/#/resolve/main/#')
-file_name=$(echo "$model_link" | sed 's#.*/##')
-modelfile_name=$(echo "$model_link" | sed 's#.*/##' | sed 's#.gguf#.Modelfile#')
-repo_name=$(echo "$model_link" | sed -E 's#https://[^/]+/([^/]+/[^/]+)/.*#\1#')
-
-# Store the model in the gguf/ directory
-
-# echo "model_link: $model_link"
-# echo "file_name: $file_name"
-# echo "modelfile_name: $modelfile_name"
-echo "repo_name: $repo_name"
-
-# Check if the model file already exists
-# Step 1. get the file name from the model link
-
-# Step 2a. check if the file exists in the gguf/ directory
-# Step 2b. if the file does not exist, download it
-if [ -f "gguf/$file_name" ]; then
-  echo "File already exists. Skipping download."
+if [ -f "$model_dl_filepath" ]; then
+  vlog "Model already exists. Skipping download."
 else
-  echo "Downloading $model_link to gguf/$file_name"
-  wget -P gguf "$model_link"
+  vlog "Downloading model..."
+  mkdir -p "$MODELS_FOLDER/$org"
+  wget -O "$model_dl_filepath" "$model_url"
 fi
 
-# Create .Modelfile file
-# If the model file link is:
-# https://huggingface.co/bartowski/Pantheon-RP-1.6.2-22b-Small-GGUF/resolve/main/Pantheon-RP-1.6.2-22b-Small-Q4_K_L.gguf
-# The .Modelfile name should be:
-# Pantheon-RP-1.6.2-22b-Small-Q4_K_L.Modelfile
-
-echo "Model file name: $modelfile_name"
-
+vlog "Creating Modelfile..."
 cat >$modelfile_name <<EOF
-# $model_link
-FROM ./gguf/$file_name
+# $model_url
+FROM ./$model_dl_filepath
 EOF
 
-# echo "Modelfile successfully created. To add this model to ollama, run the following command:"
-ollama create $repo_name -f $modelfile_name
+vlog "Adding to ollama..."
+ollama create "$model_name_gguf_removed-$quant_type" -f "$modelfile_name"
+
+# # Initialization
+# set -e
+# mkdir -p $MODELS_FOLDER
+
+# # Build Links
+# # expected format:
+# # model_link: https://huggingface.co/<ORGANIZATION>/<REPOSITORY>/resolve/main/<FILE_NAME>.gguf
+# # file_name: <FILE_NAME>.gguf
+# # modelfile_name: <FILE_NAME>.Modelfile
+# # repo_name: <ORGANIZATION>/<REPOSITORY>
