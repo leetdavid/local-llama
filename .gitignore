@@ -1,1 +1,7 @@
-gguf/
+.gguf/
+
+wget-log
+wget-log.*
+
+*.log*
+*.log.*
